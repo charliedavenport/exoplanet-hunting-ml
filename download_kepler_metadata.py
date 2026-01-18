@@ -1,3 +1,9 @@
+"""
+TODO: 
+    - Download light curve data and save to disk
+    - Check if metadata file already exists
+"""
+
 import pyvo
 import argparse
 from astropy.table import Table
@@ -10,13 +16,11 @@ base_service_url = "https://exoplanetarchive.ipac.caltech.edu/TAP"
 def get_exoplanet_tces(service : pyvo.dal.TAPService):
     adql_query = f"""
         SELECT kepid, tce_plnt_num, tce_time0, tce_period, tce_time0bk, tce_duration, 
-            tce_incl,  tce_num_transits, tce_model_snr
+            tce_incl,  tce_num_transits, tce_model_snr, tce_depth
         FROM {tce_table_name}
         WHERE tce_rogue_flag = 0
     """
-
-    result = service.search(adql_query)
-    return result.to_table()
+    return service.search(adql_query).to_table()
 
 
 def get_confirmed_koi(service : pyvo.dal.TAPService):
@@ -26,15 +30,31 @@ def get_confirmed_koi(service : pyvo.dal.TAPService):
         FROM cumulative
         WHERE koi_disposition = 'CONFIRMED'
     """
+    return service.search(adql_query).to_table()
 
-    result = service.search(adql_query)
-    return result.to_table()
+def get_non_ttv_planets(service: pyvo.dal.TAPService):
+    # https://exoplanetarchive.ipac.caltech.edu/cgi-bin/TblView/nph-tblView?app=ExoTbls&config=TD
+    adql_query = f"""
+        SELECT pl_name, ttv_flag
+        FROM TD
+        WHERE ttv_flag = 0
+        AND default_flag = 1
+    """
+    return service.search(adql_query).to_table()
+
+def get_pl_names(service: pyvo.dal.TAPService):
+    # https://exoplanetarchive.ipac.caltech.edu/cgi-bin/TblView/nph-tblView?app=ExoTbls&config=kep_conf_names 
+    adql_query = f"""
+        SELECT kepid, koi_name, kepler_name, pl_name
+        from keplernames
+    """
+    return service.search(adql_query).to_table()
 
 def main(args):
     service = pyvo.dal.TAPService(base_service_url)
     confirmed_kois : Table = get_confirmed_koi(service)
     output_filepath = os.path.join(args.output_dir, "confirmed_kois.csv")
-    confirmed_kois.write(output_filepath, format="ascii.csv")
+    confirmed_kois.write(output_filepath, format="ascii.csv", overwrite=True)
 
 
 if __name__ == "__main__":
