@@ -85,7 +85,7 @@ def main(args):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Simple script to download metadata related to Kepler exoplanets.")
-    parser.add_argument("output_dir", type=str, help="output directory")
+    parser = argparse.ArgumentParser(description="Script to download metadata related to Kepler exoplanets.")
+    parser.add_argument("-o", "--output_dir", type=str, help="output directory where metadata file will be written.", default="kepler-data")
     args = parser.parse_args()
     main(args)

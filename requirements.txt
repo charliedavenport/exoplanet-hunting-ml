@@ -1,0 +1,5 @@
+lightkurve
+polars
+pandas
+matplotlib
+pyvo
