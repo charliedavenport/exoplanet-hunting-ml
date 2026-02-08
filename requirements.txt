@@ -3,3 +3,4 @@ polars
 pandas
 matplotlib
 pyvo
+ipywidgets
