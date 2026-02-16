@@ -2,11 +2,17 @@ import lightkurve as lk
 import pandas as pd
 import argparse
 import asyncio
+import aiofiles
 import os
 from astropy.utils.data import conf
+import warnings
+from astropy.utils.exceptions import AstropyWarning
+
+warnings.simplefilter('ignore', category=AstropyWarning)
 
 conf.remote_timeout = 60
-lc_folder = "../../kepler-data/light-curves"
+lc_folder = "kepler-data/light-curves"
+max_plnt_num = 7
 
 async def search_lightcurve_async(kic_id):
     print(f"searching lightcurves for {kic_id}...")
@@ -42,19 +48,20 @@ async def download_lightcurve_async(kic_id, search_res):
 
 
 def save_lightcurve_fits(folder, kic_id, lc):
-    print(f"saving lightcurve to {folder}")
-    if not os.path.exists(folder):
-        os.mkdir(folder)
-    lc_path = os.path.join(folder, "lightcurve.fits")
-    if not os.path.exists(lc_path):
-        lc.to_fits(lc_path)
+    lc_path = os.path.join(folder, f"{kic_id}.fits")
+    print(f"Saving lightcurve to {lc_path}")
+    with open(lc_path, "wb") as f:
+        lc.to_fits(path=f)
+        # await asyncio.to_thread(
+        #     lc.to_fits, f
+        # )
 
 
 def get_transit_meta(lc, meta):
     pass
 
 
-async def lightcurve_pipeline_task_async(kic_id):
+async def lightcurve_pipeline_task_async(kic_id, meta_row):
     search_res = await search_lightcurve_async(kic_id)
     if not search_res:
         return
@@ -66,21 +73,52 @@ async def lightcurve_pipeline_task_async(kic_id):
     # synchronously do some bare minimum pre-processing
     lc = lc.remove_nans().remove_outliers()
     
-    kepid_folder = os.path.join(lc_folder, str(kic_id))
     await asyncio.to_thread(
-        save_lightcurve_fits, kepid_folder, kic_id, lc
+        save_lightcurve_fits, lc_folder, kic_id, lc
     )
+    # save_lightcurve_fits(kepid_folder, kic_id, lc)
     
 
 
 
 
 async def main(args):
-    kep_meta = pd.read_csv(args.metadata)
+    kep_meta = pd.read_csv(args.metadata, index_col=0)
 
-    kep_meta_batch = kep_meta[:10]
+    # switch from indexing on planets (kepid + tce_plnt_num) to indexing on stars (kepid)
+    kep_stars = kep_meta.pivot(
+        index="kepid", 
+        columns="tce_plnt_num", 
+        # only want values that are per-planet and not per-star
+        values=[
+            "tce_time0bk",
+            "tce_duration",
+            "tce_period",
+            "tce_num_transits",
+            "tce_model_snr"
+        ]
+    )
+    # get max tce_plnt_num so we know how far to iterate through the pivot columns
+    global max_plnt_num
+    max_plnt_num = max(kep_meta["tce_plnt_num"].to_list())
 
+    kep_stars = kep_stars[:10]
+    # print(kep_stars)
+    # return
 
+    print(f"Downloading lightcurves and creating metadata for {len(kep_stars.index)} Kepler stars...")
+
+    coroutines = [
+        lightcurve_pipeline_task_async(
+            kic_id=f"KIC{kepid}",
+            meta_row=row
+        ) for kepid, row in kep_stars.iterrows()
+    ]
+
+    await asyncio.gather(*coroutines)
+
+    
+        
 
 
 if __name__ == "__main__":
