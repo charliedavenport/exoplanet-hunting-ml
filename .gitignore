@@ -1,2 +1,3 @@
 .venv/
 kepler-data/*
+__pycache__/
