@@ -22,6 +22,9 @@ conf.remote_timeout = 60
 lc_folder = "../kepler-data/light-curves"
 max_plnt_num = 7
 
+max_search = 20
+# max_download = 10
+
 async def search_lightcurve_async(kic_id):
     print(f"searching lightcurves for {kic_id}...")
     try:
@@ -68,13 +71,14 @@ def get_transit_meta(lc, meta):
     pass
 
 
-async def lightcurve_pipeline_task_async(kic_id, meta_row, download_lock):
+async def lightcurve_pipeline_task_async(kic_id, meta_row, download_lock, search_sema):
     if os.path.exists(os.path.join(lc_folder, f"{kic_id}.fits")):
         print(f".fits file for {kic_id} already exists. Skipping.")
         return (kic_id, DownloadOutcome.ALREADY_DOWNLOADED)
-    search_res = await search_lightcurve_async(kic_id)
-    if not search_res:
-        return (kic_id, DownloadOutcome.NOT_FOUND)
+    async with search_sema:
+        search_res = await search_lightcurve_async(kic_id)
+        if not search_res:
+            return (kic_id, DownloadOutcome.NOT_FOUND)
 
     lc = await download_lightcurve_async(kic_id, search_res, download_lock)
     if not lc:
@@ -114,12 +118,13 @@ async def main(args):
     global max_plnt_num
     max_plnt_num = max(kep_meta["tce_plnt_num"].to_list())
 
-    kep_stars = kep_stars[:50]
+    # kep_stars = kep_stars[:50]
     # print(kep_stars)
     # return
 
     print(f"Downloading lightcurves and creating metadata for {len(kep_stars.index)} Kepler stars...")
 
+    search_sema = asyncio.Semaphore(max_search)
     # stupid bullshit lock that's needed because lightkurve download is thread unsafe
     download_lock = asyncio.Lock() 
 
@@ -127,13 +132,14 @@ async def main(args):
         lightcurve_pipeline_task_async(
             kic_id=f"KIC{kepid}",
             meta_row=row,
-            download_lock=download_lock
+            download_lock=download_lock,
+            search_sema=search_sema
         ) for kepid, row in kep_stars.iterrows()
     ]
 
     results = await asyncio.gather(*coroutines)
     print("finished downloading")
-    print(results)
+    # print(results)
     results_pd = pd.DataFrame(results)
     results_pd.to_csv(os.path.join(lc_folder, "download_results.csv"))
 
