@@ -7,11 +7,19 @@ import os
 from astropy.utils.data import conf
 import warnings
 from astropy.utils.exceptions import AstropyWarning
+from astroquery.mast import ObservationsClass
+from enum import Enum
 
 warnings.simplefilter('ignore', category=AstropyWarning)
 
+class DownloadOutcome(Enum):
+    DOWNLOADED = 1
+    NOT_FOUND = 2
+    ALREADY_DOWNLOADED = 3
+    ERROR = 4
+
 conf.remote_timeout = 60
-lc_folder = "kepler-data/light-curves"
+lc_folder = "../kepler-data/light-curves"
 max_plnt_num = 7
 
 async def search_lightcurve_async(kic_id):
@@ -30,12 +38,11 @@ async def search_lightcurve_async(kic_id):
     return search_res
 
 
-async def download_lightcurve_async(kic_id, search_res):
+async def download_lightcurve_async(kic_id, search_res, download_lock):
     print(f"downloading lightcurve for {kic_id}...")
     try:
-        lc = await asyncio.to_thread(
-            search_res.download_all
-        )
+        async with download_lock:
+            lc = await asyncio.to_thread(search_res.download_all)
     except TimeoutError as err:
         print(f"TimeoutError for {kic_id}")
         return
@@ -61,14 +68,17 @@ def get_transit_meta(lc, meta):
     pass
 
 
-async def lightcurve_pipeline_task_async(kic_id, meta_row):
+async def lightcurve_pipeline_task_async(kic_id, meta_row, download_lock):
+    if os.path.exists(os.path.join(lc_folder, f"{kic_id}.fits")):
+        print(f".fits file for {kic_id} already exists. Skipping.")
+        return (kic_id, DownloadOutcome.ALREADY_DOWNLOADED)
     search_res = await search_lightcurve_async(kic_id)
     if not search_res:
-        return
+        return (kic_id, DownloadOutcome.NOT_FOUND)
 
-    lc = await download_lightcurve_async(kic_id, search_res)
+    lc = await download_lightcurve_async(kic_id, search_res, download_lock)
     if not lc:
-        return
+        return (kic_id, DownloadOutcome.ERROR)
     
     # synchronously do some bare minimum pre-processing
     lc = lc.remove_nans().remove_outliers()
@@ -77,13 +87,15 @@ async def lightcurve_pipeline_task_async(kic_id, meta_row):
         save_lightcurve_fits, lc_folder, kic_id, lc
     )
     # save_lightcurve_fits(kepid_folder, kic_id, lc)
+
+    return (kic_id, DownloadOutcome.DOWNLOADED)
     
-
-
 
 
 async def main(args):
     kep_meta = pd.read_csv(args.metadata, index_col=0)
+    global lc_folder 
+    lc_folder = args.output_dir
 
     # switch from indexing on planets (kepid + tce_plnt_num) to indexing on stars (kepid)
     kep_stars = kep_meta.pivot(
@@ -102,23 +114,29 @@ async def main(args):
     global max_plnt_num
     max_plnt_num = max(kep_meta["tce_plnt_num"].to_list())
 
-    kep_stars = kep_stars[:10]
+    kep_stars = kep_stars[:50]
     # print(kep_stars)
     # return
 
     print(f"Downloading lightcurves and creating metadata for {len(kep_stars.index)} Kepler stars...")
 
+    # stupid bullshit lock that's needed because lightkurve download is thread unsafe
+    download_lock = asyncio.Lock() 
+
     coroutines = [
         lightcurve_pipeline_task_async(
             kic_id=f"KIC{kepid}",
-            meta_row=row
+            meta_row=row,
+            download_lock=download_lock
         ) for kepid, row in kep_stars.iterrows()
     ]
 
-    await asyncio.gather(*coroutines)
+    results = await asyncio.gather(*coroutines)
+    print("finished downloading")
+    print(results)
+    results_pd = pd.DataFrame(results)
+    results_pd.to_csv(os.path.join(lc_folder, "download_results.csv"))
 
-    
-        
 
 
 if __name__ == "__main__":
