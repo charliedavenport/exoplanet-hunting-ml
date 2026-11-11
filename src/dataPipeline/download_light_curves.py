@@ -71,7 +71,7 @@ def get_transit_meta(lc, meta):
     pass
 
 
-async def lightcurve_pipeline_task_async(kic_id, meta_row, download_lock, search_sema):
+async def lightcurve_pipeline_task_async(kic_id, download_lock, search_sema):
     if os.path.exists(os.path.join(lc_folder, f"{kic_id}.fits")):
         print(f".fits file for {kic_id} already exists. Skipping.")
         return (kic_id, DownloadOutcome.ALREADY_DOWNLOADED)
@@ -101,19 +101,8 @@ async def main(args):
     global lc_folder 
     lc_folder = args.output_dir
 
-    # switch from indexing on planets (kepid + tce_plnt_num) to indexing on stars (kepid)
-    kep_stars = kep_meta.pivot(
-        index="kepid", 
-        columns="tce_plnt_num", 
-        # only want values that are per-planet and not per-star
-        values=[
-            "tce_time0bk",
-            "tce_duration",
-            "tce_period",
-            "tce_num_transits",
-            "tce_model_snr"
-        ]
-    )
+    kic_ids = [f"KIC{id_value}" for id_value in kep_meta["kepid"].unique()]
+
     # get max tce_plnt_num so we know how far to iterate through the pivot columns
     global max_plnt_num
     max_plnt_num = max(kep_meta["tce_plnt_num"].to_list())
@@ -122,7 +111,7 @@ async def main(args):
     # print(kep_stars)
     # return
 
-    print(f"Downloading lightcurves and creating metadata for {len(kep_stars.index)} Kepler stars...")
+    print(f"Downloading lightcurves and creating metadata for {len(kic_ids)} Kepler stars...")
 
     search_sema = asyncio.Semaphore(max_search)
     # stupid bullshit lock that's needed because lightkurve download is thread unsafe
@@ -130,11 +119,10 @@ async def main(args):
 
     coroutines = [
         lightcurve_pipeline_task_async(
-            kic_id=f"KIC{kepid}",
-            meta_row=row,
+            kic_id=kic_id,
             download_lock=download_lock,
             search_sema=search_sema
-        ) for kepid, row in kep_stars.iterrows()
+        ) for kic_id in kic_ids
     ]
 
     results = await asyncio.gather(*coroutines)
