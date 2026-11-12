@@ -1,7 +1,5 @@
 """
-TODO: 
-    - Download light curve data and save to disk
-    - Check if metadata file already exists
+
 """
 
 import pyvo
